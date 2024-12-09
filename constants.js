@@ -6,4 +6,4 @@ const RES_GEO = RES + 1; // resolution of the geometry
 
 // ---- path to elevation data ----
 
-const ELV_PATH = "https://droneonearth-concept.herokuapp.com/elvdata/";
+const ELV_PATH = "/elvdata/";
