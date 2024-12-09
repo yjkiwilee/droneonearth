@@ -1,0 +1,311 @@
+<!doctype html>
+<html>
+    <head>
+        <!-- Worldwide elevation data from http://www.viewfinderpanoramas.org/dem3.html#hgt -->
+        <meta charset="utf-8">
+        <script src="https://code.jquery.com/jquery-3.3.1.min.js" integrity="sha256-FgpCb/KJQlLNfOu91ta32o/NMZxltwRo8QtmkMRdAu8=" crossorigin="anonymous"></script>
+    </head>
+    <body>
+        <style>
+            html, body {
+                padding : 0;
+            }
+
+            canvas {
+                position : absolute;
+                left : 0px;
+                top : 0px;
+            }
+
+            #compass {
+                width : 10px;
+                height : 60px;
+                background-color : red;
+                position : fixed;
+                z-index : 99;
+                left : 120px;
+                top : 65px;
+                transform-origin : bottom center;
+            }
+
+            #compassFrame {
+                width : 140px;
+                height : 140px;
+                background-color : none;
+                position : fixed;
+                z-index : 98;
+                left : 47px;
+                top : 47px;
+                border-radius : 50%;
+                border-width : 8px;
+                border-color : grey;
+                border-style : solid;
+            }
+
+            #loading {
+                font-family : "Courier New", Courier, monospace;
+                position : fixed;
+                top : 50%;
+                left : 50%;
+                transform : translate(-50%, -50%);
+                -webkit-transform: translate(-50%, -50%);
+                z-index : 100;
+                color: white;
+            }
+        </style>
+        
+        <div id="compass"></div>
+        <div id="compassFrame"></div>
+
+        <h1 id="loading">Loading...</h1>
+
+        <script src="libs/three.min.js"></script>
+        <script src="libs/LoaderSupport.js"></script>
+        <script src="libs/OBJLoader.js"></script>
+        <script src="libs/MTLLoader.js"></script>
+        <script src="libs/TDSLoader.js"></script>
+        <script src="jss/constants.js"></script>
+        <script src="jss/modifiedDate.js"></script>
+        <script src="jss/modifiedMath.js"></script>
+        <script src="jss/starParticle.js"></script>
+        <script src="jss/starData.js"></script>
+        <script src="jss/groundGeometry.js"></script>
+        <script src="jss/roverCamera.js"></script>
+
+        <script>
+            // 1 : 1 metre
+
+            var camera, renderer;
+
+            var scene;
+
+            var light;
+            var groundGeo, groundMat, ground;
+            
+            var trees = [];
+            var test;
+            var TREE_NUM = 100;
+
+            var stars;
+
+            var lighthelper;
+
+            var theta = 0;
+
+            var mouseX, mouseY = 0;
+
+            var paused = true;
+            var loaded = false;
+
+            init();
+
+            // variables for realistic speed
+            var prevTime;
+
+            var droneMperS = 1.4; // the m/s speed at which the drone will be moving
+            var droneMpermS = droneMperS / 1000;
+
+            var dist = 0; // distance to advance in a frame, in metres
+
+            var starTime;
+
+            animate();
+
+            function init() {
+                scene = new THREE.Scene();
+
+                // renderer
+
+                renderer = new THREE.WebGLRenderer();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                renderer.shadowMap.enabled = true;
+                renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                renderer.shadowMap.shadowCameraNear = 0.1;
+                renderer.shadowMap.shadowCameraFar = 10000000;
+                document.body.appendChild(renderer.domElement);
+
+                // light
+
+                /*light = new THREE.DirectionalLight(0xffffff, 2);
+
+                var lightvec = new THREE.Vector3(-10, 0, 3);
+                lightvec.normalize();
+                lightvec.multiplyScalar(100000000);
+
+                light.position.copy(lightvec);
+                light.castShadow = true;
+                scene.add(light);
+                light.shadow.mapSize.width = 128;
+                light.shadow.mapSize.height = 128;
+                light.shadow.camera.near = 0.5;
+                light.shadow.camera.far = 200;*/
+                
+                // https://github.com/mrdoob/three.js/blob/master/examples/webgl_lights_hemisphere.html
+
+                light = new THREE.DirectionalLight(0xdddddd, 0.9);
+                light.position.set(0, 10, 10);
+                scene.add(light);
+
+                light.castShadow = true;
+                light.shadow.mapSize.width = 2048;
+                light.shadow.mapSize.height = 2048;
+                
+                var d = 50;
+				light.shadow.camera.left = - d;
+				light.shadow.camera.right = d;
+				light.shadow.camera.top = d;
+				light.shadow.camera.bottom = - d;
+				light.shadow.camera.far = 10000;
+                //light.shadow.bias = + 0.01;
+                
+                var dirLightHeper = new THREE.DirectionalLightHelper( light, 10 );
+				scene.add( dirLightHeper );
+                
+                // camera
+
+                camera = new RoverCamera(50, window.innerWidth / window.innerHeight, 0.01, 10000000,
+                    37.578043, 126.990971);
+
+                // ground
+
+                groundGeo = new GroundGeometry(camera.lat, camera.long, camera);
+                groundMat = new THREE.MeshPhongMaterial({color: 0xffffff, shininess: 0});
+                ground = new THREE.Mesh(groundGeo, groundMat);
+                //ground.castShadow = true;
+                ground.receiveShadow = true;
+                scene.add(ground);
+
+                // trees
+
+                var objLoader = new THREE.OBJLoader2();
+                objLoader.loadMtl('models/Tree.mtl', null, function(treeMtl) {
+                    objLoader.setMaterials(treeMtl);
+                    objLoader.load(
+                        'models/Tree.obj',
+                        function(event) {
+                            var tree = event.detail.loaderRootNode;
+
+                            tree.rotateX(Math.PI / 2);
+
+                            tree.traverse(function(childObj) {
+                                if(childObj instanceof THREE.Mesh){
+                                    //childObj.material.transparent = true;
+                                    //childObj.material.side = THREE.DoubleSide;
+                                    childObj.material.alphaTest = 0.5;
+                                    childObj.castShadow = true;
+                                }
+                            });
+
+                            /*for(var i = 0; i < TREE_NUM; i++) {
+                                var tempTree = tree.clone();
+
+                                var randLat = 37.578043 + (Math.random() - 0.5) * 0.01;
+                                var randLong = 126.990971 + (Math.random() - 0.5) * 0.01;
+
+                                var randCoord = groundGeo.latlongToCoord(randLat, randLong);
+
+                                tempTree.position.set(randCoord[0], randCoord[1], 0);
+
+                                scene.add(tempTree);
+
+                                trees.push(tempTree);
+                            }*/
+                            
+                            scene.add(tree);
+                            
+                            trees.push(tree);
+                        },
+                        undefined,
+                        function(error) {
+                            console.log(error);
+                        }
+                    );
+                });
+
+                //stars
+
+                starTime = new Date();
+                stars = new StarParticle(camera.lat, camera.long, starTime);
+                scene.add(stars.mesh);
+
+                renderer.render(scene, camera);
+            }
+
+
+            function animate() {
+                requestAnimationFrame(animate);
+
+                if(!camera.ground) { // if the ground is not loaded yet
+                    return;
+                }
+
+                if(!loaded) { // if this is the first frame after load
+                    $('#loading').css('display', 'none');
+                    loaded = true;
+                    prevTime = new Date().getTime();
+
+                    var relativePos = new THREE.Vector3(0, 100, 10);
+                    light.target.position.copy(camera.position);
+                    light.position.copy(camera.position.clone().add(relativePos));
+
+                    // unstable below!!!
+
+                    console.log(trees.length);
+
+                    for(var i = 0; i < trees.length; i++) {
+                        var raycast = groundGeo.raycastXY(trees[i].position.x, trees[i].position.y);
+
+                        trees[i].position.copy(raycast);
+                    }
+
+                    return; // need to skip this frame to set prevTime.
+                }
+                
+                var curTime = new Date().getTime();
+                var diff = curTime - prevTime;
+                var tpf = diff;
+                dist = droneMpermS * tpf;
+                prevTime = curTime;
+
+                //console.log(new Date().getTime());
+
+                var ang = ((mouseX / window.innerWidth) - 1) * 360;
+                camera.face(ang); // in deg
+
+                $("#compass").css({transform : "rotate(" + (-ang).toString() + "deg)"});
+
+                ang = (1/2 - (mouseY / window.innerHeight)) * 90;
+                camera.lookUp(ang); // in deg
+
+                if(!paused) {
+                    camera.updateAngle();
+                    camera.forward(dist);
+                }
+
+                /*starTime.setTime(starTime.getTime() + 10000);
+                stars.updateTime(starTime);*/
+                stars.updateTime(new Date());
+
+                renderer.render(scene, camera);
+            }
+
+            document.onmousemove = function(e) {
+                mouseX = e.pageX;
+                mouseY = e.pageY;
+            }
+
+            document.onkeydown = function(e) {
+                var key = e.which || e.keyCode;
+                if(key == 32) {
+                    paused = !paused;
+                }
+            }
+
+            window.addEventListener('resize', function() {
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+                renderer.setSize( window.innerWidth, window.innerHeight );
+            }, false);
+        </script>
+    </body>
+</html>
